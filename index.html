@@ -1,0 +1,355 @@
+<!DOCTYPE HTML>
+<html lang="en">
+  <head>
+    <title>WebGL</title>
+    <meta charset="utf-8">
+  <style>
+  body {
+	background-color: #000;
+	margin: 0px;
+	overflow: hidden;
+}
+  </style>
+  </head>
+  
+  <body>
+  <div style="position:fixed;padding:10px;margin:10px;" id="menu">
+  </div>
+  <div id="container"></div>
+	<script type="text/javascript">
+	
+	if ( !window.requestAnimationFrame ) {
+
+	  window.requestAnimationFrame = ( function() {
+
+		return window.webkitRequestAnimationFrame ||
+		window.mozRequestAnimationFrame ||
+		window.oRequestAnimationFrame ||
+		window.msRequestAnimationFrame ||
+		function( /* function FrameRequestCallback */ callback, /* DOMElement Element */ element ) {
+
+		  window.setTimeout( callback, 1000 / 60 );
+
+		};
+
+	  } )();
+
+	}
+	</script>
+	<script src="http://threejs.org/build/three.min.js"></script>
+	<script src="http://threejs.org/examples/js/controls/OrbitControls.js"></script>
+  </body>
+
+  <script type="text/javascript">
+
+var camera, scene, renderer, point, mesh, sceneAtmosphere;
+var image;
+
+var _current;
+
+var _points, _baseGeometry;
+var everything = [];
+
+var distance = 100000;
+
+var colorFn = colorFn || function(x, i) {
+	var start = i * 0.37 + 0.13;
+	console.log(start);
+    var c = new THREE.Color();
+    c.setHSL(( start - ( x * 0.5 ) ), 1, 0.5 );
+    return c;
+  };
+
+init(document.getElementById('container'));
+setData();
+function setData()
+{
+ var xhr;
+  for(var k = 0;k < everything.length;k++)
+  {
+	everything[k].geometry.dispose();
+  }
+	everything = [];
+  xhr = new XMLHttpRequest();
+  xhr.open('GET', 'data.php', true);
+  xhr.onreadystatechange = function(e) {
+	if (xhr.readyState === 4) {
+	  if (xhr.status === 200) {
+		var data = JSON.parse(xhr.responseText);
+		if(_current === undefined)
+		{
+			_current = data.length - 1;
+		}
+		for (i=0;i<data.length;i++) {
+		  everything.push({ name: data[i][0], geometry: addData(data[i][1], {format: 'magnitude', name: data[i][0]}, _current, i) });
+		}
+
+		createPoints(_current);
+		animate();
+		
+		createMenu(everything);
+	  }
+	  else {
+		alert('Reconnect!');
+	  }
+	}
+  };
+  xhr.send(null);
+}
+
+  
+function init(container) {
+
+	var shader, uniforms, material;
+    w = container.offsetWidth || window.innerWidth;
+    h = container.offsetHeight || window.innerHeight;
+
+	geometry = new THREE.BoxGeometry(0.75, 0.75, 1, 1, 1, 1, null, false, { px: true,
+          nx: true, py: true, ny: true, pz: false, nz: true});
+
+    for (var i = 0; i < geometry.vertices.length; i++) {
+
+      var vertex = geometry.vertices[i];
+      vertex.z += 0.5;
+
+    }
+
+    point = new THREE.Mesh(geometry);
+  
+	 var Shaders = {
+    'earth' : {
+      uniforms: {
+        'texture': { type: 't', value: 0, texture: null }
+      },
+      vertexShader: [
+        'varying vec3 vNormal;',
+        'varying vec2 vUv;',
+        'void main() {',
+          'gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );',
+          'vNormal = normalize( normalMatrix * normal );',
+          'vUv = uv;',
+        '}'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform sampler2D texture;',
+        'varying vec3 vNormal;',
+        'varying vec2 vUv;',
+        'void main() {',
+          'vec3 diffuse = texture2D( texture, vUv ).xyz;',
+          'float intensity = 1.05 - dot( vNormal, vec3( 0.0, 0.0, 1.0 ) );',
+          'vec3 atmosphere = vec3( 1.0, 1.0, 1.0 ) * pow( intensity, 3.0 );',
+          'gl_FragColor = vec4( diffuse + atmosphere, 1.0 );',
+        '}'
+      ].join('\n')
+    },
+    'atmosphere' : {
+      uniforms: {},
+      vertexShader: [
+        'varying vec3 vNormal;',
+        'void main() {',
+          'vNormal = normalize( normalMatrix * normal );',
+          'gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );',
+        '}'
+      ].join('\n'),
+      fragmentShader: [
+        'varying vec3 vNormal;',
+        'void main() {',
+          'float intensity = pow( 0.8 - dot( vNormal, vec3( 0, 0, 1.0 ) ), 12.0 );',
+          'gl_FragColor = vec4( 1.0, 1.0, 1.0, 1.0 ) * intensity;',
+        '}'
+      ].join('\n')
+    }
+  };
+  	
+	scene = new THREE.Scene();
+	sceneAtmosphere = new THREE.Scene();
+
+	camera = new THREE.PerspectiveCamera(
+        30, w / h, 1, 10000);
+    camera.position.z = distance;
+
+    scene.add( camera ); // since light is child of camera
+	
+	controls = new THREE.OrbitControls( camera );
+	controls.minDistance = 75;
+	controls.maxDistance = 1500;
+    controls.enablePan = false;
+
+	var loader = new THREE.TextureLoader();
+
+    loader.load('world.jpg',
+								function ( texture ) {
+									  shader = Shaders['earth'];
+									  uniforms = THREE.UniformsUtils.clone(shader.uniforms);
+									  uniforms['texture'].value = texture;
+									  var geometry = new THREE.SphereGeometry( 200, 40, 30 );
+									  var material = new THREE.ShaderMaterial({
+
+										  uniforms: uniforms,
+										  vertexShader: shader.vertexShader,
+										  fragmentShader: shader.fragmentShader
+
+										});
+									  var mesh = new THREE.Mesh(geometry, material);
+									  scene.add(mesh);
+								});
+	
+    
+   
+
+	shader = Shaders['atmosphere'];
+    uniforms = THREE.UniformsUtils.clone(shader.uniforms);
+
+    material = new THREE.ShaderMaterial({
+
+          uniforms: uniforms,
+          vertexShader: shader.vertexShader,
+          fragmentShader: shader.fragmentShader
+
+        });
+
+    mesh = new THREE.Mesh(geometry, material);
+    mesh.scale.x = mesh.scale.y = mesh.scale.z = 1.1;
+    mesh.flipSided = true;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    sceneAtmosphere.add(mesh);
+  	
+	renderer = new THREE.WebGLRenderer({antialias: true});
+    renderer.autoClear = false;
+    renderer.setClearColor(new THREE.Color(0x000000));
+    renderer.setSize(w, h);
+
+    container.appendChild(renderer.domElement);
+	setInterval(setData, 5000);
+}
+
+function animate() {
+
+	requestAnimationFrame( animate );
+
+	//controls.update(); 
+	
+	render();
+
+}
+
+function render() {
+
+	renderer.clear();
+    renderer.render(scene, camera);
+    renderer.render(sceneAtmosphere, camera);
+	
+}
+
+function addData(data, opts, show, current) {
+    var lat, lng, size, color, i, step, colorFnWrapper;
+
+    opts.format = opts.format || 'magnitude'; // other option is 'legend'
+
+    if (opts.format === 'magnitude') {
+      step = 3;
+      colorFnWrapper = function(data, i) { return colorFn(data[i+2], current); }
+    } else if (opts.format === 'legend') {
+      step = 4;
+      colorFnWrapper = function(data, i) { return colorFn(data[i+3], current); }
+    } else {
+      throw('error: format not supported: '+opts.format);
+    }
+
+    var subgeo = new THREE.Geometry();
+    for (i = 0; i < data.length; i += step) {
+      lat = data[i];
+      lng = data[i + 1];
+      color = colorFnWrapper(data,i);
+      size = data[i + 2];
+      size = size*200;
+      addPoint(lat, lng, size, color, subgeo);
+    }
+
+	if(show === current)
+	{
+		_baseGeometry = subgeo;
+	}
+
+		return subgeo;
+  };
+
+  function createPoints() {
+	  if(_points !== undefined)
+	  {
+			 scene.remove(_points);
+		  _points.geometry.dispose();
+			_points.geometry = null;
+			_points.material.dispose();
+			_points.material = null;
+			_points = null;
+	  }
+  
+    if (_baseGeometry !== undefined) 
+	{
+		_points = new THREE.Mesh(_baseGeometry, new THREE.MeshBasicMaterial({
+		  color: 0xffffff,
+		  vertexColors: THREE.FaceColors,
+		  morphTargets: false
+		}));
+		scene.add(_points);
+    }
+  }
+
+  function addPoint(lat, lng, size, color, subgeo) {
+    var phi = (90 - lat) * Math.PI / 180;
+    var theta = (180 - lng) * Math.PI / 180;
+
+    point.position.x = - 200 * Math.sin(phi) * Math.cos(theta);
+    point.position.y = 200 * Math.cos(phi);
+    point.position.z = - 200 * Math.sin(phi) * Math.sin(theta);
+
+    point.lookAt(mesh.position);
+
+    point.scale.z = -size;
+    point.updateMatrix();
+
+    var i;
+    for (i = 0; i < point.geometry.faces.length; i++) {
+
+      point.geometry.faces[i].color = color;
+
+    }
+
+    subgeo.merge(point.geometry, point.matrix);
+  }
+  
+  function createMenu(data)
+  {
+	if(_baseGeometry !== undefined)
+	{
+		_baseGeometry.dispose();
+	}
+	var menu = document.getElementById('menu');
+	menu.innerHTML = '';
+	var i;
+    for (i = 0; i < data.length; i++) {
+		var button = document.createElement("button");
+		var t = document.createTextNode(data[i].name);
+		button.appendChild(t);
+		button.setAttribute('plop', i);
+		button.addEventListener('click', function(){
+			var j;
+			for (j = 0; j < data.length; j++) {
+				if(j==this.getAttribute('plop'))
+				{
+					console.log('activate ' + data[j].name);
+					_baseGeometry = data[j].geometry;
+					_current = j;
+				}
+			}
+			
+			createPoints();
+		});
+		menu.appendChild(button);
+	}
+  }
+ 
+</script>
+</html>
